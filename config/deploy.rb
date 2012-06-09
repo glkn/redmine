@@ -32,7 +32,10 @@ namespace :deploy do
     run "mkdir -p #{shared_path}/files"
     put File.read("config/database.yml.example"), "#{shared_path}/config/database.yml"
     put File.read("config/configuration.yml.example"), "#{shared_path}/config/configuration.yml"
+    puts "================== !!!!!!!!!!!!!!!! =============="
+    puts "Dont forget to copy initial db into #{shared_path}/production.sqlite3"
     puts "Now edit the config files in #{shared_path}."
+    puts "=================================================="
   end
   after "deploy:setup", "deploy:setup_config"
 
