@@ -6,6 +6,7 @@ gem "i18n", "~> 0.6.0"
 gem "coderay", "~> 1.0.6"
 gem "fastercsv", "~> 1.5.0", :platforms => [:mri_18, :mingw_18, :jruby]
 gem "builder"
+gem "capistrano"
 
 # Optional gem for LDAP authentication
 group :ldap do
@@ -29,27 +30,27 @@ platforms :mri, :mingw do
 end
 
 # Database gems
-platforms :mri, :mingw do
-  group :postgresql do
-    gem "pg", ">= 0.11.0"
-  end
+gem "sqlite3"
+# platforms :mri, :mingw do
+#   group :postgresql do
+#     gem "pg", ">= 0.11.0"
+#   end
 
-  group :sqlite do
-    gem "sqlite3"
-  end
-end
+#   group :sqlite do
+#     gem "sqlite3"
+#   end
+# end
+# platforms :mri_18, :mingw_18 do
+#   group :mysql do
+#     gem "mysql"
+#   end
+# end
 
-platforms :mri_18, :mingw_18 do
-  group :mysql do
-    gem "mysql"
-  end
-end
-
-platforms :mri_19, :mingw_19 do
-  group :mysql do
-    gem "mysql2", "~> 0.3.11"
-  end
-end
+# platforms :mri_19, :mingw_19 do
+#   group :mysql do
+#     gem "mysql2", "~> 0.3.11"
+#   end
+# end
 
 platforms :jruby do
   gem "jruby-openssl"
