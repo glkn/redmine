@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2012  Jean-Philippe Lang
+# Copyright (C) 2006-2015  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -21,8 +21,12 @@ module Redmine
   module Views
     module Builders
       class Structure < BlankSlate
-        def initialize
+        attr_accessor :request, :response
+
+        def initialize(request, response)
           @struct = [{}]
+          self.request = request
+          self.response = response
         end
 
         def array(tag, options={}, &block)
@@ -31,6 +35,16 @@ module Redmine
           ret = @struct.pop
           @struct.last[tag] = ret
           @struct.last.merge!(options) if options
+        end
+
+        def encode_value(value)
+          if value.is_a?(Time)
+            # Rails uses a global setting to format JSON times
+            # Don't rely on it for the API as it could have been changed
+            value.xmlschema(0)
+          else
+            value
+          end
         end
 
         def method_missing(sym, *args, &block)
@@ -42,14 +56,15 @@ module Redmine
                 @struct.last[sym] = args.first
               end
             else
+              value = encode_value(args.first)
               if @struct.last.is_a?(Array)
                 if args.size == 1 && !block_given?
-                  @struct.last << args.first
+                  @struct.last << value
                 else
-                  @struct.last << (args.last || {}).merge(:value => args.first)
+                  @struct.last << (args.last || {}).merge(:value => value)
                 end
               else
-                @struct.last[sym] = args.first
+                @struct.last[sym] = value
               end
             end
           end

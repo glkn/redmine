@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2012  Jean-Philippe Lang
+# Copyright (C) 2006-2015  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -18,7 +18,9 @@
 require File.expand_path('../../test_helper', __FILE__)
 
 class DocumentsControllerTest < ActionController::TestCase
-  fixtures :projects, :users, :roles, :members, :member_roles, :enabled_modules, :documents, :enumerations
+  fixtures :projects, :users, :email_addresses, :roles, :members, :member_roles,
+           :enabled_modules, :documents, :enumerations,
+           :groups_users, :attachments
 
   def setup
     User.current = nil
@@ -35,31 +37,30 @@ class DocumentsControllerTest < ActionController::TestCase
     assert_not_nil assigns(:grouped)
 
     # Default category selected in the new document form
-    assert_tag :select, :attributes => {:name => 'document[category_id]'},
-                        :child => {:tag => 'option', :attributes => {:selected => 'selected'},
-                                                     :content => 'Technical documentation'}
+    assert_select 'select[name=?]', 'document[category_id]' do
+      assert_select 'option[selected=selected]', :text => 'Technical documentation'
 
-    assert ! DocumentCategory.find(16).active?
-    assert_no_tag :option, :attributes => {:value => '16'},
-                           :parent => {:tag => 'select', :attributes => {:id => 'document_category_id'} }
+      assert ! DocumentCategory.find(16).active?
+      assert_select 'option[value="16"]', 0
+    end
   end
 
   def test_index_grouped_by_date
     get :index, :project_id => 'ecookbook', :sort_by => 'date'
     assert_response :success
-    assert_tag 'h3', :content => '2007-02-12'
+    assert_select 'h3', :text => '2007-02-12'
   end
 
   def test_index_grouped_by_title
     get :index, :project_id => 'ecookbook', :sort_by => 'title'
     assert_response :success
-    assert_tag 'h3', :content => 'T'
+    assert_select 'h3', :text => 'T'
   end
 
   def test_index_grouped_by_author
     get :index, :project_id => 'ecookbook', :sort_by => 'author'
     assert_response :success
-    assert_tag 'h3', :content => 'John Smith'
+    assert_select 'h3', :text => 'John Smith'
   end
 
   def test_index_with_long_description
@@ -95,16 +96,16 @@ LOREM
 
   def test_create_with_one_attachment
     ActionMailer::Base.deliveries.clear
-    Setting.notified_events << 'document_added'
     @request.session[:user_id] = 2
     set_tmp_attachments_directory
 
-    post :create, :project_id => 'ecookbook',
+    with_settings :notified_events => %w(document_added) do
+      post :create, :project_id => 'ecookbook',
                :document => { :title => 'DocumentsControllerTest#test_post_new',
                               :description => 'This is a new document',
                               :category_id => 2},
                :attachments => {'1' => {'file' => uploaded_test_file('testfile.txt', 'text/plain')}}
-
+    end
     assert_redirected_to '/projects/ecookbook/documents'
 
     document = Document.find_by_title('DocumentsControllerTest#test_post_new')
@@ -122,6 +123,23 @@ LOREM
     end
     assert_response :success
     assert_template 'new'
+  end
+
+  def test_create_non_default_category
+    @request.session[:user_id] = 2
+    category2 = Enumeration.find_by_name('User documentation')
+    category2.update_attributes(:is_default => true)
+    category1 = Enumeration.find_by_name('Uncategorized')
+    post :create,
+         :project_id => 'ecookbook',
+         :document => { :title => 'no default',
+                        :description => 'This is a new document',
+                        :category_id => category1.id }
+    assert_redirected_to '/projects/ecookbook/documents'
+    doc = Document.find_by_title('no default')
+    assert_not_nil doc
+    assert_equal category1.id, doc.category_id
+    assert_equal category1, doc.category
   end
 
   def test_edit
@@ -161,7 +179,7 @@ LOREM
       post :add_attachment, :id => 1,
         :attachments => {'1' => {'file' => uploaded_test_file('testfile.txt', 'text/plain')}}
     end
-    attachment = Attachment.first(:order => 'id DESC')
+    attachment = Attachment.order('id DESC').first
     assert_equal Document.find(1), attachment.container
   end
 end

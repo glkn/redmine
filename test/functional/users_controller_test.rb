@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2012  Jean-Philippe Lang
+# Copyright (C) 2006-2015  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -16,30 +16,20 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 require File.expand_path('../../test_helper', __FILE__)
-require 'users_controller'
-
-# Re-raise errors caught by the controller.
-class UsersController; def rescue_action(e) raise e end; end
 
 class UsersControllerTest < ActionController::TestCase
   include Redmine::I18n
 
-  fixtures :users, :projects, :members, :member_roles, :roles,
+  fixtures :users, :email_addresses, :projects, :members, :member_roles, :roles,
            :custom_fields, :custom_values, :groups_users,
-           :auth_sources
+           :auth_sources,
+           :enabled_modules,
+           :issues, :issue_statuses,
+           :trackers
 
   def setup
-    @controller = UsersController.new
-    @request    = ActionController::TestRequest.new
-    @response   = ActionController::TestResponse.new
     User.current = nil
     @request.session[:user_id] = 1 # admin
-  end
-
-  def test_index
-    get :index
-    assert_response :success
-    assert_template 'index'
   end
 
   def test_index
@@ -77,7 +67,7 @@ class UsersControllerTest < ActionController::TestCase
     assert users.any?
     assert_equal([], (users - Group.find(10).users))
     assert_select 'select[name=group_id]' do
-      assert_select 'option[value=10][selected=selected]'
+      assert_select 'option[value="10"][selected=selected]'
     end
   end
 
@@ -88,7 +78,7 @@ class UsersControllerTest < ActionController::TestCase
     assert_template 'show'
     assert_not_nil assigns(:user)
 
-    assert_tag 'li', :content => /Phone number/
+    assert_select 'li', :text => /Phone number/
   end
 
   def test_show_should_not_display_hidden_custom_fields
@@ -99,7 +89,7 @@ class UsersControllerTest < ActionController::TestCase
     assert_template 'show'
     assert_not_nil assigns(:user)
 
-    assert_no_tag 'li', :content => /Phone number/
+    assert_select 'li', :text => /Phone number/, :count => 0
   end
 
   def test_show_should_not_fail_when_custom_values_are_nil
@@ -119,17 +109,20 @@ class UsersControllerTest < ActionController::TestCase
     assert_response 404
   end
 
-  def test_show_should_not_reveal_users_with_no_visible_activity_or_project
-    @request.session[:user_id] = nil
-    get :show, :id => 9
-    assert_response 404
-  end
-
   def test_show_inactive_by_admin
     @request.session[:user_id] = 1
     get :show, :id => 5
     assert_response 200
     assert_not_nil assigns(:user)
+  end
+
+  def test_show_user_who_is_not_visible_should_return_404
+    Role.anonymous.update! :users_visibility => 'members_of_visible_projects'
+    user = User.generate!
+
+    @request.session[:user_id] = nil
+    get :show, :id => user.id
+    assert_response 404
   end
 
   def test_show_displays_memberships_based_on_project_visibility
@@ -173,8 +166,8 @@ class UsersControllerTest < ActionController::TestCase
             :firstname => 'John',
             :lastname => 'Doe',
             :login => 'jdoe',
-            :password => 'secret',
-            :password_confirmation => 'secret',
+            :password => 'secret123',
+            :password_confirmation => 'secret123',
             :mail => 'jdoe@gmail.com',
             :mail_notification => 'none'
           },
@@ -182,7 +175,7 @@ class UsersControllerTest < ActionController::TestCase
       end
     end
 
-    user = User.first(:order => 'id DESC')
+    user = User.order('id DESC').first
     assert_redirected_to :controller => 'users', :action => 'edit', :id => user.id
 
     assert_equal 'John', user.firstname
@@ -190,7 +183,7 @@ class UsersControllerTest < ActionController::TestCase
     assert_equal 'jdoe', user.login
     assert_equal 'jdoe@gmail.com', user.mail
     assert_equal 'none', user.mail_notification
-    assert user.check_password?('secret')
+    assert user.check_password?('secret123')
 
     mail = ActionMailer::Base.deliveries.last
     assert_not_nil mail
@@ -205,8 +198,8 @@ class UsersControllerTest < ActionController::TestCase
           :firstname => 'John',
           :lastname => 'Doe',
           :login => 'jdoe',
-          :password => 'secret',
-          :password_confirmation => 'secret',
+          :password => 'secret123',
+          :password_confirmation => 'secret123',
           :mail => 'jdoe@gmail.com',
           :mail_notification => 'none'
         },
@@ -217,12 +210,47 @@ class UsersControllerTest < ActionController::TestCase
           'warn_on_leaving_unsaved' => '0'
         }
     end
-    user = User.first(:order => 'id DESC')
+    user = User.order('id DESC').first
     assert_equal 'jdoe', user.login
     assert_equal true, user.pref.hide_mail
     assert_equal 'Paris', user.pref.time_zone
     assert_equal 'desc', user.pref[:comments_sorting]
     assert_equal '0', user.pref[:warn_on_leaving_unsaved]
+  end
+
+  def test_create_with_generate_password_should_email_the_password
+    assert_difference 'User.count' do
+      post :create, :user => {
+        :login => 'randompass',
+        :firstname => 'Random',
+        :lastname => 'Pass',
+        :mail => 'randompass@example.net',
+        :language => 'en',
+        :generate_password => '1',
+        :password => '',
+        :password_confirmation => ''
+      }, :send_information => 1
+    end
+    user = User.order('id DESC').first
+    assert_equal 'randompass', user.login
+
+    mail = ActionMailer::Base.deliveries.last
+    assert_not_nil mail
+    m = mail_body(mail).match(/Password: ([a-zA-Z0-9]+)/)
+    assert m
+    password = m[1]
+    assert user.check_password?(password)
+  end
+
+  def test_create_and_continue
+    post :create, :user => {
+        :login => 'randompass',
+        :firstname => 'Random',
+        :lastname => 'Pass',
+        :mail => 'randompass@example.net',
+        :generate_password => '1'
+      }, :continue => '1'
+    assert_redirected_to '/users/new?user%5Bgenerate_password%5D=1'
   end
 
   def test_create_with_failure
@@ -233,11 +261,38 @@ class UsersControllerTest < ActionController::TestCase
     assert_template 'new'
   end
 
+  def test_create_with_failure_sould_preserve_preference
+    assert_no_difference 'User.count' do
+      post :create,
+        :user => {},
+        :pref => {
+          'no_self_notified' => '1',
+          'hide_mail' => '1',
+          'time_zone' => 'Paris',
+          'comments_sorting' => 'desc',
+          'warn_on_leaving_unsaved' => '0'
+        }
+    end
+    assert_response :success
+    assert_template 'new'
+
+    assert_select 'select#pref_time_zone option[selected=selected]', :text => /Paris/
+    assert_select 'input#pref_no_self_notified[value="1"][checked=checked]'
+  end
+
   def test_edit
     get :edit, :id => 2
     assert_response :success
     assert_template 'edit'
     assert_equal User.find(2), assigns(:user)
+  end
+
+  def test_edit_registered_user
+    assert User.find(2).register!
+
+    get :edit, :id => 2
+    assert_response :success
+    assert_select 'a', :text => 'Activate'
   end
 
   def test_update
@@ -287,14 +342,45 @@ class UsersControllerTest < ActionController::TestCase
     ActionMailer::Base.deliveries.clear
     Setting.bcc_recipients = '1'
 
-    put :update, :id => 2, :user => {:password => 'newpass', :password_confirmation => 'newpass'}, :send_information => '1'
+    put :update, :id => 2, :user => {:password => 'newpass123', :password_confirmation => 'newpass123'}, :send_information => '1'
     u = User.find(2)
-    assert u.check_password?('newpass')
+    assert u.check_password?('newpass123')
 
     mail = ActionMailer::Base.deliveries.last
     assert_not_nil mail
     assert_equal [u.mail], mail.bcc
-    assert_mail_body_match 'newpass', mail
+    assert_mail_body_match 'newpass123', mail
+  end
+
+  def test_update_with_generate_password_should_email_the_password
+    ActionMailer::Base.deliveries.clear
+    Setting.bcc_recipients = '1'
+
+    put :update, :id => 2, :user => {
+      :generate_password => '1',
+      :password => '',
+      :password_confirmation => ''
+    }, :send_information => '1'
+
+    mail = ActionMailer::Base.deliveries.last
+    assert_not_nil mail
+    m = mail_body(mail).match(/Password: ([a-zA-Z0-9]+)/)
+    assert m
+    password = m[1]
+    assert User.find(2).check_password?(password)
+  end
+
+  def test_update_without_generate_password_should_not_change_password
+    put :update, :id => 2, :user => {
+      :firstname => 'changed',
+      :generate_password => '0',
+      :password => '',
+      :password_confirmation => ''
+    }, :send_information => '1'
+
+    user = User.find(2)
+    assert_equal 'changed', user.firstname
+    assert user.check_password?('jsmith')
   end
 
   def test_update_user_switchin_from_auth_source_to_password_authentication
@@ -303,10 +389,10 @@ class UsersControllerTest < ActionController::TestCase
     u.auth_source = AuthSource.find(1)
     u.save!
 
-    put :update, :id => u.id, :user => {:auth_source_id => '', :password => 'newpass', :password_confirmation => 'newpass'}
+    put :update, :id => u.id, :user => {:auth_source_id => '', :password => 'newpass123', :password_confirmation => 'newpass123'}
 
     assert_equal nil, u.reload.auth_source
-    assert u.check_password?('newpass')
+    assert u.check_password?('newpass123')
   end
 
   def test_update_notified_project
@@ -316,20 +402,28 @@ class UsersControllerTest < ActionController::TestCase
     u = User.find(2)
     assert_equal [1, 2, 5], u.projects.collect{|p| p.id}.sort
     assert_equal [1, 2, 5], u.notified_projects_ids.sort
-    assert_tag :tag => 'input',
-               :attributes => {
-                  :id    => 'notified_project_ids_',
-                  :value => 1,
-                }
+    assert_select 'input[name=?][value=?]', 'user[notified_project_ids][]', '1'
     assert_equal 'all', u.mail_notification
     put :update, :id => 2,
         :user => {
-           :mail_notification => 'selected',
-         },
-        :notified_project_ids => [1, 2]
+          :mail_notification => 'selected',
+          :notified_project_ids => [1, 2]
+        }
     u = User.find(2)
     assert_equal 'selected', u.mail_notification
     assert_equal [1, 2], u.notified_projects_ids.sort
+  end
+
+  def test_update_status_should_not_update_attributes
+    user = User.find(2)
+    user.pref[:no_self_notified] = '1'
+    user.pref.save
+
+    put :update, :id => 2, :user => {:status => 3}
+    assert_response 302
+    user = User.find(2)
+    assert_equal 3, user.status
+    assert_equal '1', user.pref[:no_self_notified]
   end
 
   def test_destroy
@@ -349,67 +443,10 @@ class UsersControllerTest < ActionController::TestCase
     assert_response 403
   end
 
-  def test_create_membership
-    assert_difference 'Member.count' do
-      post :edit_membership, :id => 7, :membership => { :project_id => 3, :role_ids => [2]}
+  def test_destroy_should_redirect_to_back_url_param
+    assert_difference 'User.count', -1 do
+      delete :destroy, :id => 2, :back_url => '/users?name=foo'
     end
-    assert_redirected_to :action => 'edit', :id => '7', :tab => 'memberships'
-    member = Member.first(:order => 'id DESC')
-    assert_equal User.find(7), member.principal
-    assert_equal [2], member.role_ids
-    assert_equal 3, member.project_id
-  end
-
-  def test_create_membership_js_format
-    assert_difference 'Member.count' do
-      post :edit_membership, :id => 7, :membership => {:project_id => 3, :role_ids => [2]}, :format => 'js'
-    end
-    assert_response :success
-    assert_select_rjs :replace_html, 'tab-content-memberships'
-    member = Member.first(:order => 'id DESC')
-    assert_equal User.find(7), member.principal
-    assert_equal [2], member.role_ids
-    assert_equal 3, member.project_id
-  end
-
-  def test_create_membership_js_format_with_failure
-    assert_no_difference 'Member.count' do
-      post :edit_membership, :id => 7, :membership => {:project_id => 3}, :format => 'js'
-    end
-    assert_response :success
-    assert @response.body.match(/alert/i), "Alert message not sent"
-    assert @response.body.match(/role can't be empty/i), "Error message not sent"
-  end
-
-  def test_update_membership
-    assert_no_difference 'Member.count' do
-      put :edit_membership, :id => 2, :membership_id => 1, :membership => { :role_ids => [2]}
-    end
-    assert_redirected_to :action => 'edit', :id => '2', :tab => 'memberships'
-    assert_equal [2], Member.find(1).role_ids
-  end
-
-  def test_update_membership_js_format
-    assert_no_difference 'Member.count' do
-      put :edit_membership, :id => 2, :membership_id => 1, :membership => {:role_ids => [2]}, :format => 'js'
-    end
-    assert_response :success
-    assert_select_rjs :replace_html, 'tab-content-memberships'
-  end
-
-  def test_destroy_membership
-    assert_difference 'Member.count', -1 do
-      delete :destroy_membership, :id => 2, :membership_id => 1
-    end
-    assert_redirected_to :action => 'edit', :id => '2', :tab => 'memberships'
-    assert_nil Member.find_by_id(1)
-  end
-
-  def test_destroy_membership_js_format
-    assert_difference 'Member.count', -1 do
-      delete :destroy_membership, :id => 2, :membership_id => 1, :format => 'js'
-    end
-    assert_response :success
-    assert_select_rjs :replace_html, 'tab-content-memberships'
+    assert_redirected_to '/users?name=foo'
   end
 end

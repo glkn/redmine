@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2012  Jean-Philippe Lang
+# Copyright (C) 2006-2015  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -20,7 +20,7 @@ require File.expand_path('../../test_helper', __FILE__)
 class RepositoriesCvsControllerTest < ActionController::TestCase
   tests RepositoriesController
 
-  fixtures :projects, :users, :roles, :members, :member_roles,
+  fixtures :projects, :users, :email_addresses, :roles, :members, :member_roles,
            :repositories, :enabled_modules
 
   REPOSITORY_PATH = Rails.root.join('tmp/test/cvs_repository').to_s
@@ -112,9 +112,7 @@ class RepositoriesCvsControllerTest < ActionController::TestCase
           :path => repository_path_hash(['sources', 'watchers_controller.rb'])[:param]
       assert_response :success
       assert_template 'entry'
-      assert_no_tag :tag => 'td',
-                    :attributes => { :class => /line-code/},
-                    :content => /before_filter/
+      assert_select 'td.line-code', :text => /before_filter/, :count => 0
     end
 
     def test_entry_at_given_revision
@@ -129,9 +127,7 @@ class RepositoriesCvsControllerTest < ActionController::TestCase
       assert_response :success
       assert_template 'entry'
       # this line was removed in r3
-      assert_tag :tag => 'td',
-                 :attributes => { :class => /line-code/},
-                 :content => /before_filter/
+      assert_select 'td.line-code', :text => /before_filter/
     end
 
     def test_entry_not_found
@@ -141,9 +137,7 @@ class RepositoriesCvsControllerTest < ActionController::TestCase
       assert_equal NUM_REV, @repository.changesets.count
       get :entry, :id => PRJ_ID,
           :path => repository_path_hash(['sources', 'zzz.c'])[:param]
-      assert_tag :tag => 'p',
-                 :attributes => { :id => /errorExplanation/ },
-                 :content => /The entry or revision was not found in the repository/
+      assert_select 'p#errorExplanation', :text => /The entry or revision was not found in the repository/
     end
 
     def test_entry_download
@@ -179,10 +173,8 @@ class RepositoriesCvsControllerTest < ActionController::TestCase
         get :diff, :id => PRJ_ID, :rev => 3, :type => dt
         assert_response :success
         assert_template 'diff'
-        assert_tag :tag => 'td', :attributes => { :class => 'line-code diff_out' },
-                                 :content => /before_filter :require_login/
-        assert_tag :tag => 'td', :attributes => { :class => 'line-code diff_in' },
-                                 :content => /with one change/
+        assert_select 'td.line-code.diff_out', :text => /before_filter :require_login/
+        assert_select 'td.line-code.diff_in', :text => /with one change/
       end
     end
 
@@ -195,16 +187,11 @@ class RepositoriesCvsControllerTest < ActionController::TestCase
         get :diff, :id => PRJ_ID, :rev => 1, :type => dt
         assert_response :success
         assert_template 'diff'
-        assert_tag :tag => 'td', :attributes => { :class => 'line-code diff_in' },
-                                 :content => /watched.remove_watcher/
-        assert_tag :tag => 'th', :attributes => { :class => 'filename' },
-                                 :content => /test\/README/
-        assert_tag :tag => 'th', :attributes => { :class => 'filename' },
-                                 :content => /test\/images\/delete.png	/
-        assert_tag :tag => 'th', :attributes => { :class => 'filename' },
-                                 :content => /test\/images\/edit.png/
-        assert_tag :tag => 'th', :attributes => { :class => 'filename' },
-                                 :content => /test\/sources\/watchers_controller.rb/
+        assert_select 'td.line-code.diff_in', :text => /watched.remove_watcher/
+        assert_select 'th.filename', :text => /test\/README/
+        assert_select 'th.filename', :text => /test\/images\/delete.png/
+        assert_select 'th.filename', :text => /test\/images\/edit.png/
+        assert_select 'th.filename', :text => /test\/sources\/watchers_controller.rb/
       end
     end
 
@@ -217,34 +204,19 @@ class RepositoriesCvsControllerTest < ActionController::TestCase
           :path => repository_path_hash(['sources', 'watchers_controller.rb'])[:param]
       assert_response :success
       assert_template 'annotate'
+
       # 1.1 line
-      assert_tag :tag => 'th',
-                 :attributes => { :class => 'line-num' },
-                 :content => '18',
-                 :sibling => {
-                   :tag => 'td',
-                   :attributes => { :class => 'revision' },
-                   :content => /1.1/,
-                   :sibling => {
-                      :tag => 'td',
-                      :attributes => { :class => 'author' },
-                      :content => /LANG/
-                        }
-                   }
+      assert_select 'tr' do
+        assert_select 'th.line-num', :text => '21'
+        assert_select 'td.revision', :text => /1.1/
+        assert_select 'td.author', :text => /LANG/
+      end
       # 1.2 line
-      assert_tag :tag => 'th',
-                 :attributes => { :class => 'line-num' },
-                 :content => '32',
-                 :sibling => {
-                     :tag => 'td',
-                     :attributes => { :class => 'revision' },
-                     :content => /1.2/,
-                     :sibling => {
-                        :tag => 'td',
-                        :attributes => { :class => 'author' },
-                        :content => /LANG/
-                        }
-                   }
+      assert_select 'tr' do
+        assert_select 'th.line-num', :text => '32'
+        assert_select 'td.revision', :text => /1.2/
+        assert_select 'td.author', :text => /LANG/
+      end
     end
 
     def test_destroy_valid_repository

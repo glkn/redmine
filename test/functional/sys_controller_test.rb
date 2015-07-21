@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2012  Jean-Philippe Lang
+# Copyright (C) 2006-2015  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -16,33 +16,33 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 require File.expand_path('../../test_helper', __FILE__)
-require 'sys_controller'
-require 'mocha'
-
-# Re-raise errors caught by the controller.
-class SysController; def rescue_action(e) raise e end; end
 
 class SysControllerTest < ActionController::TestCase
   fixtures :projects, :repositories, :enabled_modules
 
   def setup
-    @controller = SysController.new
-    @request    = ActionController::TestRequest.new
-    @response   = ActionController::TestResponse.new
     Setting.sys_api_enabled = '1'
     Setting.enabled_scm = %w(Subversion Git)
+  end
+
+  def teardown
+    Setting.clear_cache
   end
 
   def test_projects_with_repository_enabled
     get :projects
     assert_response :success
     assert_equal 'application/xml', @response.content_type
-    with_options :tag => 'projects' do |test|
-      test.assert_tag :children => { :count  => Project.active.has_module(:repository).count }
-      test.assert_tag 'project', :child => {:tag => 'identifier', :sibling => {:tag => 'is-public'}}
+
+    assert_select 'projects' do
+      assert_select 'project', Project.active.has_module(:repository).count
+      assert_select 'project' do
+        assert_select 'identifier'
+        assert_select 'is-public'
+      end
     end
-    assert_no_tag 'extra-info'
-    assert_no_tag 'extra_info'
+    assert_select 'extra-info', 0
+    assert_select 'extra_info', 0
   end
 
   def test_create_project_repository
@@ -58,13 +58,12 @@ class SysControllerTest < ActionController::TestCase
     assert r.is_a?(Repository::Subversion)
     assert_equal 'file:///create/project/repository/subproject2', r.url
     
-    assert_tag 'repository-subversion',
-      :child => {
-        :tag => 'id', :content => r.id.to_s,
-        :sibling => {:tag => 'url', :content => r.url}
-      }
-    assert_no_tag 'extra-info'
-    assert_no_tag 'extra_info'
+    assert_select 'repository-subversion' do
+      assert_select 'id', :text => r.id.to_s
+      assert_select 'url', :text => r.url
+    end
+    assert_select 'extra-info', 0
+    assert_select 'extra_info', 0
   end
 
   def test_create_already_existing

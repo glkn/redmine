@@ -1,17 +1,26 @@
+# Redmine - project management software
+# Copyright (C) 2006-2015  Jean-Philippe Lang
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
+
 require File.expand_path('../../test_helper', __FILE__)
-require 'issue_statuses_controller'
-
-# Re-raise errors caught by the controller.
-class IssueStatusesController; def rescue_action(e) raise e end; end
-
 
 class IssueStatusesControllerTest < ActionController::TestCase
-  fixtures :issue_statuses, :issues
+  fixtures :issue_statuses, :issues, :users, :trackers
 
   def setup
-    @controller = IssueStatusesController.new
-    @request    = ActionController::TestRequest.new
-    @response   = ActionController::TestResponse.new
     User.current = nil
     @request.session[:user_id] = 1 # admin
   end
@@ -45,7 +54,7 @@ class IssueStatusesControllerTest < ActionController::TestCase
       post :create, :issue_status => {:name => 'New status'}
     end
     assert_redirected_to :action => 'index'
-    status = IssueStatus.find(:first, :order => 'id DESC')
+    status = IssueStatus.order('id DESC').first
     assert_equal 'New status', status.name
   end
 
@@ -53,7 +62,7 @@ class IssueStatusesControllerTest < ActionController::TestCase
     post :create, :issue_status => {:name => ''}
     assert_response :success
     assert_template 'new'
-    assert_error_tag :content => /name can't be blank/i
+    assert_select_error /name cannot be blank/i
   end
 
   def test_edit
@@ -73,11 +82,12 @@ class IssueStatusesControllerTest < ActionController::TestCase
     put :update, :id => '3', :issue_status => {:name => ''}
     assert_response :success
     assert_template 'edit'
-    assert_error_tag :content => /name can't be blank/i
+    assert_select_error /name cannot be blank/i
   end
 
   def test_destroy
-    Issue.delete_all("status_id = 1")
+    Issue.where(:status_id => 1).delete_all
+    Tracker.where(:default_status_id => 1).delete_all
 
     assert_difference 'IssueStatus.count', -1 do
       delete :destroy, :id => '1'
@@ -86,8 +96,20 @@ class IssueStatusesControllerTest < ActionController::TestCase
     assert_nil IssueStatus.find_by_id(1)
   end
 
-  def test_destroy_should_block_if_status_in_use
-    assert_not_nil Issue.find_by_status_id(1)
+  def test_destroy_should_block_if_status_is_used_by_issues
+    assert Issue.where(:status_id => 1).any?
+    Tracker.where(:default_status_id => 1).delete_all
+
+    assert_no_difference 'IssueStatus.count' do
+      delete :destroy, :id => '1'
+    end
+    assert_redirected_to :action => 'index'
+    assert_not_nil IssueStatus.find_by_id(1)
+  end
+
+  def test_destroy_should_block_if_status_is_used_as_tracker_default_status
+    Issue.where(:status_id => 1).delete_all
+    assert Tracker.where(:default_status_id => 1).any?
 
     assert_no_difference 'IssueStatus.count' do
       delete :destroy, :id => '1'

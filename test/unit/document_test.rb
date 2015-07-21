@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2012  Jean-Philippe Lang
+# Copyright (C) 2006-2015  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -18,19 +18,30 @@
 require File.expand_path('../../test_helper', __FILE__)
 
 class DocumentTest < ActiveSupport::TestCase
-  fixtures :projects, :enumerations, :documents, :attachments
+  fixtures :projects, :enumerations, :documents, :attachments,
+           :enabled_modules,
+           :users, :email_addresses, :members, :member_roles, :roles,
+           :groups_users
 
   def test_create
     doc = Document.new(:project => Project.find(1), :title => 'New document', :category => Enumeration.find_by_name('User documentation'))
     assert doc.save
   end
 
+  def test_create_with_long_title
+    title = 'x'*255
+    doc = Document.new(:project => Project.find(1), :title => title, :category => DocumentCategory.first)
+    assert_save doc
+    assert_equal title, doc.reload.title
+  end
+
   def test_create_should_send_email_notification
     ActionMailer::Base.deliveries.clear
-    Setting.notified_events << 'document_added'
-    doc = Document.new(:project => Project.find(1), :title => 'New document', :category => Enumeration.find_by_name('User documentation'))
-
-    assert doc.save
+    
+    with_settings :notified_events => %w(document_added) do
+      doc = Document.new(:project => Project.find(1), :title => 'New document', :category => Enumeration.find_by_name('User documentation'))
+      assert doc.save
+    end
     assert_equal 1, ActionMailer::Base.deliveries.size
   end
 

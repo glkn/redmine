@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2012  Jean-Philippe Lang
+# Copyright (C) 2006-2015  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -21,9 +21,6 @@ class RolesControllerTest < ActionController::TestCase
   fixtures :roles, :users, :members, :member_roles, :workflows, :trackers
 
   def setup
-    @controller = RolesController.new
-    @request    = ActionController::TestRequest.new
-    @response   = ActionController::TestResponse.new
     User.current = nil
     @request.session[:user_id] = 1 # admin
   end
@@ -34,16 +31,40 @@ class RolesControllerTest < ActionController::TestCase
     assert_template 'index'
 
     assert_not_nil assigns(:roles)
-    assert_equal Role.find(:all, :order => 'builtin, position'), assigns(:roles)
+    assert_equal Role.order('builtin, position').to_a, assigns(:roles)
 
-    assert_tag :tag => 'a', :attributes => { :href => '/roles/1/edit' },
-                            :content => 'Manager'
+    assert_select 'a[href="/roles/1/edit"]', :text => 'Manager'
   end
 
   def test_new
     get :new
     assert_response :success
     assert_template 'new'
+  end
+
+  def test_new_with_copy
+    copy_from = Role.find(2)
+
+    get :new, :copy => copy_from.id.to_s
+    assert_response :success
+    assert_template 'new'
+
+    role = assigns(:role)
+    assert_equal copy_from.permissions, role.permissions
+
+    assert_select 'form' do
+      # blank name
+      assert_select 'input[name=?][value=""]', 'role[name]'
+      # edit_project permission checked
+      assert_select 'input[type=checkbox][name=?][value=edit_project][checked=checked]', 'role[permissions][]'
+      # add_project permission not checked
+      assert_select 'input[type=checkbox][name=?][value=add_project]', 'role[permissions][]'
+      assert_select 'input[type=checkbox][name=?][value=add_project][checked=checked]', 'role[permissions][]', 0
+      # workflow copy selected
+      assert_select 'select[name=?]', 'copy_workflow_from' do
+        assert_select 'option[value="2"][selected=selected]'
+      end
+    end
   end
 
   def test_create_with_validaton_failure
@@ -53,7 +74,7 @@ class RolesControllerTest < ActionController::TestCase
 
     assert_response :success
     assert_template 'new'
-    assert_tag :tag => 'div', :attributes => { :id => 'errorExplanation' }
+    assert_select 'div#errorExplanation'
   end
 
   def test_create_without_workflow_copy
@@ -77,7 +98,7 @@ class RolesControllerTest < ActionController::TestCase
     assert_redirected_to '/roles'
     role = Role.find_by_name('RoleWithWorkflowCopy')
     assert_not_nil role
-    assert_equal Role.find(1).workflows.size, role.workflows.size
+    assert_equal Role.find(1).workflow_rules.size, role.workflow_rules.size
   end
 
   def test_edit
@@ -85,6 +106,14 @@ class RolesControllerTest < ActionController::TestCase
     assert_response :success
     assert_template 'edit'
     assert_equal Role.find(1), assigns(:role)
+    assert_select 'select[name=?]', 'role[issues_visibility]'
+  end
+
+  def test_edit_anonymous
+    get :edit, :id => Role.anonymous.id
+    assert_response :success
+    assert_template 'edit'
+    assert_select 'select[name=?]', 'role[issues_visibility]', 0
   end
 
   def test_edit_invalid_should_respond_with_404
@@ -130,17 +159,10 @@ class RolesControllerTest < ActionController::TestCase
     assert_template 'permissions'
 
     assert_not_nil assigns(:roles)
-    assert_equal Role.find(:all, :order => 'builtin, position'), assigns(:roles)
+    assert_equal Role.order('builtin, position').to_a, assigns(:roles)
 
-    assert_tag :tag => 'input', :attributes => { :type => 'checkbox',
-                                                 :name => 'permissions[3][]',
-                                                 :value => 'add_issues',
-                                                 :checked => 'checked' }
-
-    assert_tag :tag => 'input', :attributes => { :type => 'checkbox',
-                                                 :name => 'permissions[3][]',
-                                                 :value => 'delete_issues',
-                                                 :checked => nil }
+    assert_select 'input[name=?][type=checkbox][value=add_issues][checked=checked]', 'permissions[3][]'
+    assert_select 'input[name=?][type=checkbox][value=delete_issues]:not([checked])', 'permissions[3][]'
   end
 
   def test_post_permissions

@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2012  Jean-Philippe Lang
+# Copyright (C) 2006-2015  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -43,10 +43,7 @@ module Redmine
           end
 
           def scm_command_version
-            scm_version = scm_version_from_command_line.dup
-            if scm_version.respond_to?(:force_encoding)
-              scm_version.force_encoding('ASCII-8BIT')
-            end
+            scm_version = scm_version_from_command_line.dup.force_encoding('ASCII-8BIT')
             if m = scm_version.match(%r{\A(.*?)((\d+\.)+\d+)})
               m[2].scan(%r{\d+}).collect(&:to_i)
             end
@@ -55,6 +52,17 @@ module Redmine
           def scm_version_from_command_line
             shellout("#{sq_bin} --version") { |io| io.read }.to_s
           end
+        end
+
+        def initialize(url, root_url=nil, login=nil, password=nil, path_encoding=nil)
+          @url = url
+          @root_url = url
+          @path_encoding = 'UTF-8'
+          # do not call *super* for non ASCII repository path
+        end
+
+        def bzr_path_encodig=(encoding)
+          @path_encoding = encoding
         end
 
         # Get info about the repository
@@ -86,16 +94,20 @@ module Redmine
           cmd_args << "-r#{identifier.to_i}"
           cmd_args << bzr_target(path)
           scm_cmd(*cmd_args) do |io|
-            prefix = "#{url}/#{path}".gsub('\\', '/')
-            logger.debug "PREFIX: #{prefix}"
+            prefix_utf8 = "#{url}/#{path}".gsub('\\', '/')
+            logger.debug "PREFIX: #{prefix_utf8}"
+            prefix = scm_iconv(@path_encoding, 'UTF-8', prefix_utf8)
+            prefix.force_encoding('ASCII-8BIT')
             re = %r{^V\s+(#{Regexp.escape(prefix)})?(\/?)([^\/]+)(\/?)\s+(\S+)\r?$}
             io.each_line do |line|
               next unless line =~ re
-              entries << Entry.new({:name => $3.strip,
-                                    :path => ((path.empty? ? "" : "#{path}/") + $3.strip),
-                                    :kind => ($4.blank? ? 'file' : 'dir'),
+              name_locale, slash, revision = $3.strip, $4, $5.strip
+              name = scm_iconv('UTF-8', @path_encoding, name_locale)
+              entries << Entry.new({:name => name,
+                                    :path => ((path.empty? ? "" : "#{path}/") + name),
+                                    :kind => (slash.blank? ? 'file' : 'dir'),
                                     :size => nil,
-                                    :lastrev => Revision.new(:revision => $5.strip)
+                                    :lastrev => Revision.new(:revision => revision)
                                   })
             end
           end
@@ -143,7 +155,8 @@ module Redmine
                     revision.message << "#{$1}\n"
                   else
                     if $1 =~ /^(.*)\s+(\S+)$/
-                      path = $1.strip
+                      path_locale = $1.strip
+                      path = scm_iconv('UTF-8', @path_encoding, path_locale)
                       revid = $2
                       case parsing
                       when 'added'
@@ -154,7 +167,10 @@ module Redmine
                         revision.paths << {:action => 'D', :path => "/#{path}", :revision => revid}
                       when 'renamed'
                         new_path = path.split('=>').last
-                        revision.paths << {:action => 'M', :path => "/#{new_path.strip}", :revision => revid} if new_path
+                        if new_path
+                          revision.paths << {:action => 'M', :path => "/#{new_path.strip}",
+                                             :revision => revid}
+                        end
                       end
                     end
                   end
@@ -280,8 +296,13 @@ module Redmine
         def scm_cmd(*args, &block)
           full_args = []
           full_args += args
+          full_args_locale = []
+          full_args.map do |e|
+            full_args_locale << scm_iconv(@path_encoding, 'UTF-8', e)
+          end
           ret = shellout(
-                   self.class.sq_bin + ' ' + full_args.map { |e| shell_quote e.to_s }.join(' '),
+                   self.class.sq_bin + ' ' + 
+                     full_args_locale.map { |e| shell_quote e.to_s }.join(' '),
                    &block
                    )
           if $? && $?.exitstatus != 0
@@ -294,8 +315,13 @@ module Redmine
         def scm_cmd_no_raise(*args, &block)
           full_args = []
           full_args += args
+          full_args_locale = []
+          full_args.map do |e|
+            full_args_locale << scm_iconv(@path_encoding, 'UTF-8', e)
+          end
           ret = shellout(
-                   self.class.sq_bin + ' ' + full_args.map { |e| shell_quote e.to_s }.join(' '),
+                   self.class.sq_bin + ' ' + 
+                     full_args_locale.map { |e| shell_quote e.to_s }.join(' '),
                    &block
                    )
           ret

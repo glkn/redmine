@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2012  Jean-Philippe Lang
+# Copyright (C) 2006-2015  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -30,12 +30,12 @@ module Redmine
         clear_listeners_instances
       end
 
-      # Returns all the listerners instances.
+      # Returns all the listener instances.
       def listeners
         @@listeners ||= @@listener_classes.collect {|listener| listener.instance}
       end
 
-      # Returns the listeners instances for the given hook.
+      # Returns the listener instances for the given hook.
       def hook_listeners(hook)
         @@hook_listeners[hook] ||= listeners.select {|listener| listener.respond_to?(hook)}
       end
@@ -96,18 +96,33 @@ module Redmine
       # Default to creating links using only the path.  Subclasses can
       # change this default as needed
       def self.default_url_options
-        {:only_path => true }
+        {:only_path => true, :script_name => Redmine::Utils.relative_url_root}
       end
 
-      # Helper method to directly render a partial using the context:
+      # Helper method to directly render using the context,
+      # render_options must be valid #render options.
       #
       #   class MyHook < Redmine::Hook::ViewListener
       #     render_on :view_issues_show_details_bottom, :partial => "show_more_data"
       #   end
       #
-      def self.render_on(hook, options={})
+      #   class MultipleHook < Redmine::Hook::ViewListener
+      #     render_on :view_issues_show_details_bottom,
+      #       {:partial => "show_more_data"},
+      #       {:partial => "show_even_more_data"}
+      #   end
+      #
+      def self.render_on(hook, *render_options)
         define_method hook do |context|
-          context[:controller].send(:render_to_string, {:locals => context}.merge(options))
+          render_options.map do |options|
+            if context[:hook_caller].respond_to?(:render)
+              context[:hook_caller].send(:render, {:locals => context}.merge(options))
+            elsif context[:controller].is_a?(ActionController::Base)
+              context[:controller].send(:render_to_string, {:locals => context}.merge(options))
+            else
+              raise "Cannot render #{self.name} hook from #{context[:hook_caller].class.name}"
+            end
+          end
         end
       end
       
@@ -138,14 +153,15 @@ module Redmine
     # * project => current project
     # * request => Request instance
     # * controller => current Controller instance
+    # * hook_caller => object that called the hook
     #
     module Helper
       def call_hook(hook, context={})
         if is_a?(ActionController::Base)
-          default_context = {:controller => self, :project => @project, :request => request}
+          default_context = {:controller => self, :project => @project, :request => request, :hook_caller => self}
           Redmine::Hook.call_hook(hook, default_context.merge(context))
         else
-          default_context = { :project => @project }
+          default_context = { :project => @project, :hook_caller => self }
           default_context[:controller] = controller if respond_to?(:controller)
           default_context[:request] = request if respond_to?(:request)
           Redmine::Hook.call_hook(hook, default_context.merge(context)).join(' ').html_safe

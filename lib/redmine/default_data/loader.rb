@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2012  Jean-Philippe Lang
+# Copyright (C) 2006-2015  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -26,10 +26,10 @@ module Redmine
         # Returns true if no data is already loaded in the database
         # otherwise false
         def no_data?
-          !Role.find(:first, :conditions => {:builtin => 0}) &&
-            !Tracker.find(:first) &&
-            !IssueStatus.find(:first) &&
-            !Enumeration.find(:first)
+          !Role.where(:builtin => 0).exists? &&
+            !Tracker.exists? &&
+            !IssueStatus.exists? &&
+            !Enumeration.exists?
         end
 
         # Loads the default data
@@ -42,6 +42,7 @@ module Redmine
             # Roles
             manager = Role.create! :name => l(:default_role_manager),
                                    :issues_visibility => 'all',
+                                   :users_visibility => 'all',
                                    :position => 1
             manager.permissions = manager.setable_permissions.collect {|p| p.name}
             manager.save!
@@ -53,6 +54,8 @@ module Redmine
                                                       :view_issues,
                                                       :add_issues,
                                                       :edit_issues,
+                                                      :view_private_notes,
+                                                      :set_notes_private,
                                                       :manage_issue_relations,
                                                       :manage_subtasks,
                                                       :add_issue_notes,
@@ -123,54 +126,54 @@ module Redmine
                                                            :browse_repository,
                                                            :view_changesets]
 
-            # Trackers
-            Tracker.create!(:name => l(:default_tracker_bug),     :is_in_chlog => true,  :is_in_roadmap => false, :position => 1)
-            Tracker.create!(:name => l(:default_tracker_feature), :is_in_chlog => true,  :is_in_roadmap => true,  :position => 2)
-            Tracker.create!(:name => l(:default_tracker_support), :is_in_chlog => false, :is_in_roadmap => false, :position => 3)
-
             # Issue statuses
-            new       = IssueStatus.create!(:name => l(:default_issue_status_new), :is_closed => false, :is_default => true, :position => 1)
-            in_progress  = IssueStatus.create!(:name => l(:default_issue_status_in_progress), :is_closed => false, :is_default => false, :position => 2)
-            resolved  = IssueStatus.create!(:name => l(:default_issue_status_resolved), :is_closed => false, :is_default => false, :position => 3)
-            feedback  = IssueStatus.create!(:name => l(:default_issue_status_feedback), :is_closed => false, :is_default => false, :position => 4)
-            closed    = IssueStatus.create!(:name => l(:default_issue_status_closed), :is_closed => true, :is_default => false, :position => 5)
-            rejected  = IssueStatus.create!(:name => l(:default_issue_status_rejected), :is_closed => true, :is_default => false, :position => 6)
+            new       = IssueStatus.create!(:name => l(:default_issue_status_new), :is_closed => false, :position => 1)
+            in_progress  = IssueStatus.create!(:name => l(:default_issue_status_in_progress), :is_closed => false, :position => 2)
+            resolved  = IssueStatus.create!(:name => l(:default_issue_status_resolved), :is_closed => false, :position => 3)
+            feedback  = IssueStatus.create!(:name => l(:default_issue_status_feedback), :is_closed => false, :position => 4)
+            closed    = IssueStatus.create!(:name => l(:default_issue_status_closed), :is_closed => true, :position => 5)
+            rejected  = IssueStatus.create!(:name => l(:default_issue_status_rejected), :is_closed => true, :position => 6)
+
+            # Trackers
+            Tracker.create!(:name => l(:default_tracker_bug),     :default_status_id => new.id, :is_in_chlog => true,  :is_in_roadmap => false, :position => 1)
+            Tracker.create!(:name => l(:default_tracker_feature), :default_status_id => new.id, :is_in_chlog => true,  :is_in_roadmap => true,  :position => 2)
+            Tracker.create!(:name => l(:default_tracker_support), :default_status_id => new.id, :is_in_chlog => false, :is_in_roadmap => false, :position => 3)
 
             # Workflow
-            Tracker.find(:all).each { |t|
-              IssueStatus.find(:all).each { |os|
-                IssueStatus.find(:all).each { |ns|
-                  Workflow.create!(:tracker_id => t.id, :role_id => manager.id, :old_status_id => os.id, :new_status_id => ns.id) unless os == ns
+            Tracker.all.each { |t|
+              IssueStatus.all.each { |os|
+                IssueStatus.all.each { |ns|
+                  WorkflowTransition.create!(:tracker_id => t.id, :role_id => manager.id, :old_status_id => os.id, :new_status_id => ns.id) unless os == ns
                 }
               }
             }
 
-            Tracker.find(:all).each { |t|
+            Tracker.all.each { |t|
               [new, in_progress, resolved, feedback].each { |os|
                 [in_progress, resolved, feedback, closed].each { |ns|
-                  Workflow.create!(:tracker_id => t.id, :role_id => developer.id, :old_status_id => os.id, :new_status_id => ns.id) unless os == ns
+                  WorkflowTransition.create!(:tracker_id => t.id, :role_id => developer.id, :old_status_id => os.id, :new_status_id => ns.id) unless os == ns
                 }
               }
             }
 
-            Tracker.find(:all).each { |t|
+            Tracker.all.each { |t|
               [new, in_progress, resolved, feedback].each { |os|
                 [closed].each { |ns|
-                  Workflow.create!(:tracker_id => t.id, :role_id => reporter.id, :old_status_id => os.id, :new_status_id => ns.id) unless os == ns
+                  WorkflowTransition.create!(:tracker_id => t.id, :role_id => reporter.id, :old_status_id => os.id, :new_status_id => ns.id) unless os == ns
                 }
               }
-              Workflow.create!(:tracker_id => t.id, :role_id => reporter.id, :old_status_id => resolved.id, :new_status_id => feedback.id)
+              WorkflowTransition.create!(:tracker_id => t.id, :role_id => reporter.id, :old_status_id => resolved.id, :new_status_id => feedback.id)
             }
 
             # Enumerations
-            DocumentCategory.create!(:name => l(:default_doc_category_user), :position => 1)
-            DocumentCategory.create!(:name => l(:default_doc_category_tech), :position => 2)
-
             IssuePriority.create!(:name => l(:default_priority_low), :position => 1)
             IssuePriority.create!(:name => l(:default_priority_normal), :position => 2, :is_default => true)
             IssuePriority.create!(:name => l(:default_priority_high), :position => 3)
             IssuePriority.create!(:name => l(:default_priority_urgent), :position => 4)
             IssuePriority.create!(:name => l(:default_priority_immediate), :position => 5)
+
+            DocumentCategory.create!(:name => l(:default_doc_category_user), :position => 1)
+            DocumentCategory.create!(:name => l(:default_doc_category_tech), :position => 2)
 
             TimeEntryActivity.create!(:name => l(:default_activity_design), :position => 1)
             TimeEntryActivity.create!(:name => l(:default_activity_development), :position => 2)

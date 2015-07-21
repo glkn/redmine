@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2012  Jean-Philippe Lang
+# Copyright (C) 2006-2015  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -18,27 +18,38 @@
 class RolesController < ApplicationController
   layout 'admin'
 
-  before_filter :require_admin, :except => :index
-  before_filter :require_admin_or_api_request, :only => :index
-  before_filter :find_role, :only => [:edit, :update, :destroy]
-  accept_api_auth :index
+  before_filter :require_admin, :except => [:index, :show]
+  before_filter :require_admin_or_api_request, :only => [:index, :show]
+  before_filter :find_role, :only => [:show, :edit, :update, :destroy]
+  accept_api_auth :index, :show
+
+  require_sudo_mode :create, :update, :destroy
 
   def index
     respond_to do |format|
       format.html {
-        @role_pages, @roles = paginate :roles, :per_page => 25, :order => 'builtin, position'
+        @role_pages, @roles = paginate Role.sorted, :per_page => 25
         render :action => "index", :layout => false if request.xhr?
       }
       format.api {
-        @roles = Role.givable.all
+        @roles = Role.givable.to_a
       }
     end
   end
 
+  def show
+    respond_to do |format|
+      format.api
+    end
+  end
+
   def new
-    # Prefills the form with 'Non member' role permissions
+    # Prefills the form with 'Non member' role permissions by default
     @role = Role.new(params[:role] || {:permissions => Role.non_member.permissions})
-    @roles = Role.sorted.all
+    if params[:copy].present? && @copy_from = Role.find_by_id(params[:copy])
+      @role.copy_from(@copy_from)
+    end
+    @roles = Role.sorted.to_a
   end
 
   def create
@@ -46,12 +57,12 @@ class RolesController < ApplicationController
     if request.post? && @role.save
       # workflow copy
       if !params[:copy_workflow_from].blank? && (copy_from = Role.find_by_id(params[:copy_workflow_from]))
-        @role.workflows.copy(copy_from)
+        @role.workflow_rules.copy(copy_from)
       end
       flash[:notice] = l(:notice_successful_create)
-      redirect_to :action => 'index'
+      redirect_to roles_path
     else
-      @roles = Role.sorted.all
+      @roles = Role.sorted.to_a
       render :action => 'new'
     end
   end
@@ -60,9 +71,9 @@ class RolesController < ApplicationController
   end
 
   def update
-    if request.put? and @role.update_attributes(params[:role])
+    if @role.update_attributes(params[:role])
       flash[:notice] = l(:notice_successful_update)
-      redirect_to :action => 'index'
+      redirect_to roles_path(:page => params[:page])
     else
       render :action => 'edit'
     end
@@ -70,14 +81,14 @@ class RolesController < ApplicationController
 
   def destroy
     @role.destroy
-    redirect_to :action => 'index'
+    redirect_to roles_path
   rescue
     flash[:error] =  l(:error_can_not_remove_role)
-    redirect_to :action => 'index'
+    redirect_to roles_path
   end
 
   def permissions
-    @roles = Role.sorted.all
+    @roles = Role.sorted.to_a
     @permissions = Redmine::AccessControl.permissions.select { |p| !p.public? }
     if request.post?
       @roles.each do |role|
@@ -85,7 +96,7 @@ class RolesController < ApplicationController
         role.save
       end
       flash[:notice] = l(:notice_successful_update)
-      redirect_to :action => 'index'
+      redirect_to roles_path
     end
   end
 

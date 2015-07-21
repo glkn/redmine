@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2012  Jean-Philippe Lang
+# Copyright (C) 2006-2015  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -22,14 +22,22 @@ class GroupsController < ApplicationController
   before_filter :find_group, :except => [:index, :new, :create]
   accept_api_auth :index, :show, :create, :update, :destroy, :add_users, :remove_user
 
+  require_sudo_mode :add_users, :remove_user, :create, :update, :destroy, :edit_membership, :destroy_membership
+
   helper :custom_fields
+  helper :principal_memberships
 
   def index
-    @groups = Group.find(:all, :order => 'lastname')
-
     respond_to do |format|
-      format.html
-      format.api
+      format.html {
+        @groups = Group.sorted.to_a
+        @user_count_by_group_id = user_count_by_group_id
+      }
+      format.api {
+        scope = Group.sorted
+        scope = scope.givable unless params[:builtin] == '1'
+        @groups = scope.to_a
+      }
     end
   end
 
@@ -72,7 +80,7 @@ class GroupsController < ApplicationController
       if @group.save
         flash[:notice] = l(:notice_successful_update)
         format.html { redirect_to(groups_path) }
-        format.api  { head :ok }
+        format.api  { render_api_ok }
       else
         format.html { render :action => "edit" }
         format.api  { render_validation_errors(@group) }
@@ -84,67 +92,42 @@ class GroupsController < ApplicationController
     @group.destroy
 
     respond_to do |format|
-      format.html { redirect_to(groups_url) }
-      format.api  { head :ok }
+      format.html { redirect_to(groups_path) }
+      format.api  { render_api_ok }
     end
   end
 
+  def new_users
+  end
+
   def add_users
-    users = User.find_all_by_id(params[:user_id] || params[:user_ids])
-    @group.users << users if request.post?
+    @users = User.not_in_group(@group).where(:id => (params[:user_id] || params[:user_ids])).to_a
+    @group.users << @users
     respond_to do |format|
-      format.html { redirect_to :controller => 'groups', :action => 'edit', :id => @group, :tab => 'users' }
-      format.js {
-        render(:update) {|page|
-          page.replace_html "tab-content-users", :partial => 'groups/users'
-          users.each {|user| page.visual_effect(:highlight, "user-#{user.id}") }
-        }
+      format.html { redirect_to edit_group_path(@group, :tab => 'users') }
+      format.js
+      format.api {
+        if @users.any?
+          render_api_ok
+        else
+          render_api_errors "#{l(:label_user)} #{l('activerecord.errors.messages.invalid')}"
+        end
       }
-      format.api { head :ok }
     end
   end
 
   def remove_user
     @group.users.delete(User.find(params[:user_id])) if request.delete?
     respond_to do |format|
-      format.html { redirect_to :controller => 'groups', :action => 'edit', :id => @group, :tab => 'users' }
-      format.js { render(:update) {|page| page.replace_html "tab-content-users", :partial => 'groups/users'} }
-      format.api { head :ok }
+      format.html { redirect_to edit_group_path(@group, :tab => 'users') }
+      format.js
+      format.api { render_api_ok }
     end
   end
 
   def autocomplete_for_user
-    @users = User.active.not_in_group(@group).like(params[:q]).all(:limit => 100)
-    render :layout => false
-  end
-
-  def edit_membership
-    @membership = Member.edit_membership(params[:membership_id], params[:membership], @group)
-    @membership.save if request.post?
     respond_to do |format|
-      if @membership.valid?
-        format.html { redirect_to :controller => 'groups', :action => 'edit', :id => @group, :tab => 'memberships' }
-        format.js {
-          render(:update) {|page|
-            page.replace_html "tab-content-memberships", :partial => 'groups/memberships'
-            page.visual_effect(:highlight, "member-#{@membership.id}")
-          }
-        }
-      else
-        format.js {
-          render(:update) {|page|
-            page.alert(l(:notice_failed_to_save_members, :errors => @membership.errors.full_messages.join(', ')))
-          }
-        }
-      end
-    end
-  end
-
-  def destroy_membership
-    Member.find(params[:membership_id]).destroy if request.post?
-    respond_to do |format|
-      format.html { redirect_to :controller => 'groups', :action => 'edit', :id => @group, :tab => 'memberships' }
-      format.js { render(:update) {|page| page.replace_html "tab-content-memberships", :partial => 'groups/memberships'} }
+      format.js
     end
   end
 
@@ -154,5 +137,13 @@ class GroupsController < ApplicationController
     @group = Group.find(params[:id])
   rescue ActiveRecord::RecordNotFound
     render_404
+  end
+
+  def user_count_by_group_id
+    h = User.joins(:groups).group('group_id').count
+    h.keys.each do |key|
+      h[key.to_i] = h.delete(key)
+    end
+    h
   end
 end

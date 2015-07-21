@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2012  Jean-Philippe Lang
+# Copyright (C) 2006-2015  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -18,6 +18,7 @@
 # Generic exception for when the AuthSource can not be reached
 # (eg. can not connect to the LDAP)
 class AuthSourceException < Exception; end
+class AuthSourceTimeoutException < AuthSourceException; end
 
 class AuthSource < ActiveRecord::Base
   include Redmine::SubclassFactory
@@ -28,6 +29,7 @@ class AuthSource < ActiveRecord::Base
   validates_presence_of :name
   validates_uniqueness_of :name
   validates_length_of :name, :maximum => 60
+  attr_protected :id
 
   def authenticate(login, password)
   end
@@ -47,6 +49,24 @@ class AuthSource < ActiveRecord::Base
     write_ciphered_attribute(:account_password, arg)
   end
 
+  def searchable?
+    false
+  end
+
+  def self.search(q)
+    results = []
+    AuthSource.all.each do |source|
+      begin
+        if source.searchable?
+          results += source.search(q)
+        end
+      rescue AuthSourceException => e
+        logger.error "Error while searching users in #{source.name}: #{e.message}"
+      end
+    end
+    results
+  end
+
   def allow_password_changes?
     self.class.allow_password_changes?
   end
@@ -58,7 +78,7 @@ class AuthSource < ActiveRecord::Base
 
   # Try to authenticate a user not yet registered against available sources
   def self.authenticate(login, password)
-    AuthSource.find(:all, :conditions => ["onthefly_register=?", true]).each do |source|
+    AuthSource.where(:onthefly_register => true).each do |source|
       begin
         logger.debug "Authenticating '#{login}' against '#{source.name}'" if logger && logger.debug?
         attrs = source.authenticate(login, password)

@@ -21,7 +21,9 @@
       <% @project = project %>
       <li>
       <%= link_to_project project %> (<%= format_time(project.created_on) %>)
-      <%= textilizable project.short_description, :project => project %>
+      <div class="wiki">
+        <%= textilizable project.short_description, :project => project %>
+      </div>
       </li>
     <% end %>
     <% @project = nil %>
@@ -32,7 +34,6 @@
 </div>
 
 <% content_for :header_tags do %>
-<%= stylesheet_link_tag 'scm' %>
 <%= auto_discovery_link_tag(:atom, {:controller => 'news', :action => 'index', :key => User.current.rss_key, :format => 'atom'},
                                    :title => "#{Setting.app_title}: #{l(:label_news_latest)}") %>
 <%= auto_discovery_link_tag(:atom, {:controller => 'activities', :action => 'index', :key => User.current.rss_key, :format => 'atom'},

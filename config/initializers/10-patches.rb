@@ -5,9 +5,19 @@ module ActiveRecord
     include Redmine::I18n
     # Translate attribute names for validation errors display
     def self.human_attribute_name(attr, *args)
-      l("field_#{attr.to_s.gsub(/_id$/, '')}", :default => attr)
+      attr = attr.to_s.sub(/_id$/, '').sub(/^.+\./, '')
+      l("field_#{name.underscore.gsub('/', '_')}_#{attr}", :default => ["field_#{attr}".to_sym, attr])
     end
   end
+
+  # Undefines private Kernel#open method to allow using `open` scopes in models.
+  # See Defect #11545 (http://www.redmine.org/issues/11545) for details.
+  class Base
+    class << self
+      undef open
+    end
+  end
+  class Relation ; undef open ; end
 end
 
 module ActionView
@@ -33,7 +43,7 @@ module ActionView
   class Resolver
     def find_all(name, prefix=nil, partial=false, details={}, key=nil, locals=[])
       cached(key, [name, prefix, partial], details, locals) do
-        if details[:formats] & [:xml, :json]
+        if (details[:formats] & [:xml, :json]).any?
           details = details.dup
           details[:formats] = details[:formats].dup + [:api]
         end
@@ -44,6 +54,45 @@ module ActionView
 end
 
 ActionView::Base.field_error_proc = Proc.new{ |html_tag, instance| html_tag || ''.html_safe }
+
+# HTML5: <option value=""></option> is invalid, use <option value="">&nbsp;</option> instead
+module ActionView
+  module Helpers
+    module Tags
+      class Base
+        private
+        def add_options_with_non_empty_blank_option(option_tags, options, value = nil)
+          if options[:include_blank] == true
+            options = options.dup
+            options[:include_blank] = '&nbsp;'.html_safe
+          end
+          add_options_without_non_empty_blank_option(option_tags, options, value)
+        end
+        alias_method_chain :add_options, :non_empty_blank_option
+      end
+    end
+
+    module FormTagHelper
+      def select_tag_with_non_empty_blank_option(name, option_tags = nil, options = {})
+        if options.delete(:include_blank)
+          options[:prompt] = '&nbsp;'.html_safe
+        end
+        select_tag_without_non_empty_blank_option(name, option_tags, options)
+      end
+      alias_method_chain :select_tag, :non_empty_blank_option
+    end
+
+    module FormOptionsHelper
+      def options_for_select_with_non_empty_blank_option(container, selected = nil)
+        if container.is_a?(Array)
+          container = container.map {|element| element.blank? ? ["&nbsp;".html_safe, ""] : element}
+        end
+        options_for_select_without_non_empty_blank_option(container, selected)
+      end
+      alias_method_chain :options_for_select, :non_empty_blank_option
+    end
+  end
+end
 
 require 'mail'
 
@@ -79,6 +128,34 @@ ActionMailer::Base.add_delivery_method :async_smtp, DeliveryMethods::AsyncSMTP
 ActionMailer::Base.add_delivery_method :async_sendmail, DeliveryMethods::AsyncSendmail
 ActionMailer::Base.add_delivery_method :tmp_file, DeliveryMethods::TmpFile
 
+# Changes how sent emails are logged
+# Rails doesn't log cc and bcc which is misleading when using bcc only (#12090)
+module ActionMailer
+  class LogSubscriber < ActiveSupport::LogSubscriber
+    def deliver(event)
+      recipients = [:to, :cc, :bcc].inject("") do |s, header|
+        r = Array.wrap(event.payload[header])
+        if r.any?
+          s << "\n  #{header}: #{r.join(', ')}"
+        end
+        s
+      end
+      info("\nSent email \"#{event.payload[:subject]}\" (%1.fms)#{recipients}" % event.duration)
+      debug(event.payload[:mail])
+    end
+  end
+end
+
+# #deliver is deprecated in Rails 4.2
+# Prevents massive deprecation warnings
+module ActionMailer
+  class MessageDelivery < Delegator
+    def deliver
+      deliver_now
+    end
+  end
+end
+
 module ActionController
   module MimeResponds
     class Collector
@@ -96,7 +173,7 @@ module ActionController
     # TODO: remove it in a later version
     def self.session=(*args)
       $stderr.puts "Please remove config/initializers/session_store.rb and run `rake generate_secret_token`.\n" +
-        "Setting the session secret with ActionController.session= is no longer supported in Rails 3."
+        "Setting the session secret with ActionController.session= is no longer supported."
       exit 1
     end
   end

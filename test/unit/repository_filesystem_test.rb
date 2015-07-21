@@ -1,5 +1,5 @@
 # Redmine - project management software
-# Copyright (C) 2006-2012  Jean-Philippe Lang
+# Copyright (C) 2006-2015  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -41,14 +41,13 @@ class RepositoryFilesystemTest < ActiveSupport::TestCase
                           :identifier   => 'test'
                         )
     assert !repo.save
-    assert_include "Root directory can't be blank",
+    assert_include "Root directory cannot be blank",
                    repo.errors.full_messages
   end
 
   def test_blank_root_directory_error_message_fr
     set_language_if_valid 'fr'
-    str = "R\xc3\xa9pertoire racine doit \xc3\xaatre renseign\xc3\xa9(e)"
-    str.force_encoding('UTF-8') if str.respond_to?(:force_encoding)
+    str = "R\xc3\xa9pertoire racine doit \xc3\xaatre renseign\xc3\xa9(e)".force_encoding('UTF-8')
     repo = Repository::Filesystem.new(
                           :project      => @project,
                           :url          => "",
@@ -70,7 +69,12 @@ class RepositoryFilesystemTest < ActiveSupport::TestCase
     end
 
     def test_entries
-      assert_equal 3, @repository.entries("", 2).size
+      entries = @repository.entries("", 2)
+      assert_kind_of Redmine::Scm::Adapters::Entries, entries
+      assert_equal 3, entries.size
+    end
+
+    def test_entries_in_directory
       assert_equal 2, @repository.entries("dir", 3).size
     end
 

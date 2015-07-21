@@ -1,5 +1,7 @@
+#encoding: utf-8
+#
 # Redmine - project management software
-# Copyright (C) 2006-2012  Jean-Philippe Lang
+# Copyright (C) 2006-2015  Jean-Philippe Lang
 #
 # This program is free software; you can redistribute it and/or
 # modify it under the terms of the GNU General Public License
@@ -59,6 +61,10 @@ class Redmine::WikiFormatting::TextileFormatterTest < ActionView::TestCase
     end
   end
 
+  def test_modifier_should_work_with_one_non_ascii_character
+    assert_html_output "*Ä*" => "<strong>Ä</strong>"
+  end
+
   def test_styles
     # single style
     assert_html_output({
@@ -107,6 +113,20 @@ class Redmine::WikiFormatting::TextileFormatterTest < ActionView::TestCase
     assert_html_output(
       'this is @some code@'      => 'this is <code>some code</code>',
       '@<Location /redmine>@'    => '<code>&lt;Location /redmine&gt;</code>'
+    )
+  end
+
+  def test_lang_attribute
+    assert_html_output(
+      '*[fr]French*'      => '<strong lang="fr">French</strong>',
+      '*[fr-fr]French*'   => '<strong lang="fr-fr">French</strong>',
+      '*[fr_fr]French*'   => '<strong lang="fr_fr">French</strong>'
+    )
+  end
+
+  def test_lang_attribute_should_ignore_invalid_value
+    assert_html_output(
+      '*[fr3]French*'      => '<strong>[fr3]French</strong>'
     )
   end
 
@@ -159,11 +179,11 @@ EXPECTED
     )
   end
 
-  def test_acronyms
+  def test_abbreviations
     assert_html_output(
-      'this is an acronym: GPL(General Public License)' => 'this is an acronym: <acronym title="General Public License">GPL</acronym>',
-      '2 letters JP(Jean-Philippe) acronym' => '2 letters <acronym title="Jean-Philippe">JP</acronym> acronym',
-      'GPL(This is a double-quoted "title")' => '<acronym title="This is a double-quoted &quot;title&quot;">GPL</acronym>'
+      'this is an abbreviation: GPL(General Public License)' => 'this is an abbreviation: <abbr title="General Public License">GPL</abbr>',
+      '2 letters JP(Jean-Philippe) abbreviation' => '2 letters <abbr title="Jean-Philippe">JP</abbr> abbreviation',
+      'GPL(This is a double-quoted "title")' => '<abbr title="This is a double-quoted &quot;title&quot;">GPL</abbr>'
     )
   end
 
@@ -261,6 +281,42 @@ RAW
     <td>cell31</td>
     <td>cell32<br/>cell32 line2</td>
     <td>cell33</td>
+  </tr>
+</table>
+EXPECTED
+
+    assert_equal expected.gsub(%r{\s+}, ''), to_html(raw).gsub(%r{\s+}, '')
+  end
+
+  def test_tables_with_lists
+    raw = <<-RAW
+This is a table with lists:
+
+|cell11|cell12|
+|cell21|ordered list
+# item
+# item 2|
+|cell31|unordered list
+* item
+* item 2|
+
+RAW
+
+    expected = <<-EXPECTED
+<p>This is a table with lists:</p>
+
+<table>
+  <tr>
+    <td>cell11</td>
+    <td>cell12</td>
+  </tr>
+  <tr>
+    <td>cell21</td>
+    <td>ordered list<br /># item<br /># item 2</td>
+  </tr>
+  <tr>
+    <td>cell31</td>
+    <td>unordered list<br />* item<br />* item 2</td>
   </tr>
 </table>
 EXPECTED
@@ -392,6 +448,45 @@ Nulla nunc nisi, egestas in ornare vel, posuere ac libero."]
     
     assert_equal [STR_WITH_PRE[0..1], "New text"].flatten.join("\n\n"),
       @formatter.new(text).update_section(3, replacement)
+  end
+
+  def test_get_section_should_support_lines_with_spaces_before_heading
+    # the lines after Content 2 and Heading 4 contain a space
+    text = <<-STR
+h1. Heading 1
+
+Content 1
+
+h1. Heading 2
+
+Content 2
+ 
+h1. Heading 3
+
+Content 3
+
+h1. Heading 4
+ 
+Content 4
+STR
+
+    [1, 2, 3, 4].each do |index|
+      assert_match /\Ah1. Heading #{index}.+Content #{index}/m, @formatter.new(text).get_section(index).first
+    end
+  end
+
+  def test_get_section_should_support_headings_starting_with_a_tab
+    text = <<-STR
+h1.\tHeading 1
+
+Content 1
+
+h1. Heading 2
+
+Content 2
+STR
+
+    assert_match /\Ah1.\tHeading 1\s+Content 1\z/, @formatter.new(text).get_section(1).first
   end
 
   private
