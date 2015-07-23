@@ -1,6 +1,6 @@
 require "bundler/capistrano"
 
-server "192.168.1.10", :web, :app, :db, primary: true
+server "ec2-54-74-221-57.eu-west-1.compute.amazonaws.com", :web, :app, :db, primary: true
 
 set :application, "redmine"
 set :user, "deployer"
@@ -9,7 +9,7 @@ set :deploy_via, :remote_cache
 set :use_sudo, false
 
 set :scm, "git"
-set :repository, "git@github.com:mokytojas/redmine.git"
+set :repository, "https://github.com/glkn/redmine.git"
 set :branch, "master"
 
 default_run_options[:pty] = true

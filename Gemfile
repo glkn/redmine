@@ -6,7 +6,7 @@ end
 
 gem "rails", "4.2.3"
 gem "jquery-rails", "~> 3.1.3"
-gem "capistrano"
+gem 'capistrano', '~> 2.15'
 gem "coderay", "~> 1.1.0"
 gem "builder", ">= 3.0.4"
 gem "request_store", "1.0.5"
